@@ -12,11 +12,27 @@ function getQueryParam(key) {
   return new URLSearchParams(window.location.search).get(key);
 }
 
+// 🌍 Reverse geocoding function to get full address
+async function reverseGeocode(lat, lng) {
+  try {
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`
+    );
+    if (!response.ok) throw new Error("Failed to fetch location");
+    const data = await response.json();
+    return data.display_name; // Full address string
+  } catch (err) {
+    console.error("Reverse geocoding error:", err);
+    return "Unknown location";
+  }
+}
+
 export default function App() {
   const mapRef = useRef(null);
   const myMarkerRef = useRef(null);
   const sharerMarkerRef = useRef(null);
   const [sharerData, setSharerData] = useState(null);
+  const [locationName, setLocationName] = useState("");
 
   const role = getQueryParam("role"); // "sharer" or "viewer"
   const userId = getQueryParam("id") || "test-user";
@@ -73,10 +89,15 @@ export default function App() {
           table: "locations",
           filter: `id=eq.${userId}`,
         },
-        (payload) => {
+        async (payload) => {
           const { lat, lng, updated_at } = payload.new;
           setSharerData({ lat, lng, updated_at });
 
+          // Fetch detailed address
+          const address = await reverseGeocode(lat, lng);
+          setLocationName(address);
+
+          // Map setup
           if (!mapRef.current) {
             mapRef.current = L.map("map").setView([lat, lng], 14);
             L.tileLayer(
@@ -110,12 +131,16 @@ export default function App() {
             borderRadius: "8px",
             boxShadow: "0 0 8px rgba(0,0,0,0.2)",
             zIndex: 1000,
+            maxWidth: "90vw",
           }}>
           <div>
             <b>User:</b> {userId}
           </div>
           <div>
             📌 {sharerData.lat.toFixed(4)}, {sharerData.lng.toFixed(4)}
+          </div>
+          <div style={{ marginTop: "4px" }}>
+            📍 <span style={{ fontSize: "0.9em" }}>{locationName}</span>
           </div>
           <div>🕒 {new Date(sharerData.updated_at).toLocaleTimeString()}</div>
         </div>
