@@ -3,108 +3,133 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { createClient } from "@supabase/supabase-js";
 
-// Supabase setup
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY
 );
 
+function getQueryParam(key) {
+  return new URLSearchParams(window.location.search).get(key);
+}
+
 export default function App() {
   const mapRef = useRef(null);
   const myMarkerRef = useRef(null);
-  const [otherMarkers, setOtherMarkers] = useState({});
-  const myIdRef = useRef("user-" + Math.random().toString(36).slice(2));
+  const sharerMarkerRef = useRef(null);
+  const [sharerData, setSharerData] = useState(null);
 
-  // 📍 Send my location every 5 seconds
+  const role = getQueryParam("role"); // "sharer" or "viewer"
+  const userId = getQueryParam("id") || "test-user";
+
+  // 🚀 SHARER: Sends location to Supabase
   useEffect(() => {
-    if ("geolocation" in navigator) {
-      const watchId = navigator.geolocation.watchPosition(
-        async (pos) => {
-          const { latitude, longitude } = pos.coords;
+    if (role !== "sharer" || !("geolocation" in navigator)) return;
 
-          // Initialize map and marker
-          if (!mapRef.current) {
-            mapRef.current = L.map("map").setView([latitude, longitude], 14);
-            L.tileLayer(
-              "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            ).addTo(mapRef.current);
+    const watchId = navigator.geolocation.watchPosition(
+      async (pos) => {
+        const { latitude, longitude } = pos.coords;
 
-            myMarkerRef.current = L.marker([latitude, longitude], {
-              icon: arrowIcon,
-            }).addTo(mapRef.current);
-          }
+        // Map setup
+        if (!mapRef.current) {
+          mapRef.current = L.map("map").setView([latitude, longitude], 14);
+          L.tileLayer(
+            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          ).addTo(mapRef.current);
+          myMarkerRef.current = L.marker([latitude, longitude], {
+            icon: arrowIcon,
+          }).addTo(mapRef.current);
+        }
 
-          // Update my marker
-          if (myMarkerRef.current) {
-            myMarkerRef.current.setLatLng([latitude, longitude]);
-            mapRef.current.setView([latitude, longitude]);
-          }
+        // Update marker
+        if (myMarkerRef.current) {
+          myMarkerRef.current.setLatLng([latitude, longitude]);
+          mapRef.current.setView([latitude, longitude]);
+        }
 
-          // Upsert location to Supabase
-          try {
-            const { error } = await supabase.from("locations").upsert({
-              id: myIdRef.current,
-              lat: latitude,
-              lng: longitude,
-              updated_at: new Date().toISOString(),
-            });
-            if (error) {
-              console.error("Supabase upsert error:", error);
-            }
-          } catch (e) {
-            console.error("Supabase insert failed:", e);
-          }
-        },
-        (err) => console.error("Geo error:", err),
-        { enableHighAccuracy: true }
-      );
+        // Send to Supabase
+        await supabase.from("locations").upsert({
+          id: userId,
+          lat: latitude,
+          lng: longitude,
+          updated_at: new Date().toISOString(),
+        });
+      },
+      (err) => console.error("Geolocation error:", err),
+      { enableHighAccuracy: true }
+    );
 
-      return () => navigator.geolocation.clearWatch(watchId);
-    }
-  }, []);
+    return () => navigator.geolocation.clearWatch(watchId);
+  }, [role, userId]);
 
-  // 🧭 Listen for others' locations
+  // 🔍 VIEWER: Subscribes to sharer updates
   useEffect(() => {
     const channel = supabase
       .channel("realtime:locations")
       .on(
         "postgres_changes",
-        { event: "*", schema: "public", table: "locations" },
+        {
+          event: "*",
+          schema: "public",
+          table: "locations",
+          filter: `id=eq.${userId}`,
+        },
         (payload) => {
-          const { id, lat, lng } = payload.new;
-          if (!mapRef.current || !lat || !lng) return;
-          if (id === myIdRef.current) return;
+          const { lat, lng, updated_at } = payload.new;
+          setSharerData({ lat, lng, updated_at });
 
-          setOtherMarkers((prev) => {
-            if (prev[id]) {
-              prev[id].setLatLng([lat, lng]);
-            } else {
-              prev[id] = L.marker([lat, lng], { icon: blueIcon }).addTo(
-                mapRef.current
-              );
-            }
-            return { ...prev };
-          });
+          if (!mapRef.current) {
+            mapRef.current = L.map("map").setView([lat, lng], 14);
+            L.tileLayer(
+              "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            ).addTo(mapRef.current);
+            sharerMarkerRef.current = L.marker([lat, lng], {
+              icon: blueIcon,
+            }).addTo(mapRef.current);
+          } else if (sharerMarkerRef.current) {
+            sharerMarkerRef.current.setLatLng([lat, lng]);
+          }
         }
       )
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
+    return () => supabase.removeChannel(channel);
+  }, [userId]);
 
-  return <div id="map" style={{ height: "100vh", width: "100vw" }} />;
+  return (
+    <>
+      <div id="map" style={{ height: "100vh", width: "100vw" }} />
+
+      {sharerData && role === "viewer" && (
+        <div
+          style={{
+            position: "absolute",
+            top: 10,
+            left: 10,
+            background: "#fff",
+            padding: "10px",
+            borderRadius: "8px",
+            boxShadow: "0 0 8px rgba(0,0,0,0.2)",
+            zIndex: 1000,
+          }}>
+          <div>
+            <b>User:</b> {userId}
+          </div>
+          <div>
+            📌 {sharerData.lat.toFixed(4)}, {sharerData.lng.toFixed(4)}
+          </div>
+          <div>🕒 {new Date(sharerData.updated_at).toLocaleTimeString()}</div>
+        </div>
+      )}
+    </>
+  );
 }
 
-// ✅ Blue arrow icon for current user
 const arrowIcon = L.icon({
-  iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png", // Blue GPS arrow icon
+  iconUrl: "https://cdn-icons-png.flaticon.com/512/684/684908.png",
   iconSize: [35, 35],
   iconAnchor: [17, 17],
 });
 
-// 🔵 Default blue marker for other users
 const blueIcon = L.icon({
   iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
   iconSize: [25, 41],
