@@ -11,35 +11,37 @@ const supabase = createClient(
 export default function App() {
   const mapRef = useRef(null);
   const myMarkerRef = useRef(null);
-  const [otherMarkers, setOtherMarkers] = useState({});
+  const otherMarkers = useRef({});
+  const myIdRef = useRef("user-" + Math.random().toString(36).slice(2));
 
   // 📍 Send my location every 5 seconds
   useEffect(() => {
-    const myId = "user-" + Math.random().toString(36).slice(2); // Or use Supabase Auth UID
+    const myId = myIdRef.current;
 
     if ("geolocation" in navigator) {
       const watchId = navigator.geolocation.watchPosition(
         async (pos) => {
           const { latitude, longitude } = pos.coords;
 
-          // Initialize map if not already
+          // Initialize map
           if (!mapRef.current) {
             mapRef.current = L.map("map").setView([latitude, longitude], 14);
-            L.tileLayer(
-              "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            ).addTo(mapRef.current);
-            myMarkerRef.current = L.marker([latitude, longitude]).addTo(
-              mapRef.current
-            );
+            L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+              attribution:
+                '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+            }).addTo(mapRef.current);
+
+            myMarkerRef.current = L.marker([latitude, longitude])
+              .addTo(mapRef.current)
+              .bindPopup("You");
           }
 
-          // Update my marker
+          // Update your own marker
           if (myMarkerRef.current) {
             myMarkerRef.current.setLatLng([latitude, longitude]);
-            mapRef.current.setView([latitude, longitude]);
           }
 
-          // Upsert my location to Supabase
+          // Save to Supabase
           await supabase.from("locations").upsert({
             id: myId,
             lat: latitude,
@@ -47,7 +49,7 @@ export default function App() {
             updated_at: new Date().toISOString(),
           });
         },
-        (err) => console.error("Geo error:", err),
+        (err) => console.error("Geolocation error:", err),
         { enableHighAccuracy: true }
       );
 
@@ -55,8 +57,10 @@ export default function App() {
     }
   }, []);
 
-  // 🧭 Listen for others’ location changes
+  // 🧭 Listen for location updates (including others)
   useEffect(() => {
+    const myId = myIdRef.current;
+
     const channel = supabase
       .channel("realtime:locations")
       .on(
@@ -64,21 +68,18 @@ export default function App() {
         { event: "*", schema: "public", table: "locations" },
         (payload) => {
           const { id, lat, lng } = payload.new;
-          if (!mapRef.current || !lat || !lng) return;
+          if (!lat || !lng || id === myId) return;
 
-          // Don't show ourself
-          if (id === myId) return;
+          if (!mapRef.current) return;
 
-          setOtherMarkers((prev) => {
-            if (prev[id]) {
-              prev[id].setLatLng([lat, lng]);
-            } else {
-              prev[id] = L.marker([lat, lng], { icon: blueIcon }).addTo(
-                mapRef.current
-              );
-            }
-            return { ...prev };
-          });
+          if (otherMarkers.current[id]) {
+            otherMarkers.current[id].setLatLng([lat, lng]);
+          } else {
+            const marker = L.marker([lat, lng], { icon: blueIcon })
+              .addTo(mapRef.current)
+              .bindPopup(`User: ${id}`);
+            otherMarkers.current[id] = marker;
+          }
         }
       )
       .subscribe();
