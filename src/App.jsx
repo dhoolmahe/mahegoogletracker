@@ -4,8 +4,8 @@ import "leaflet/dist/leaflet.css";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
-  "https://mlwotaiijdzcnigdhvhj.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1sd290YWlpamR6Y25pZ2RodmhqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY5NjQ4MTcsImV4cCI6MjA2MjU0MDgxN30.0oaOP3hB5KnzG54dr2QYEuyg6UFXtNWw0_dtXizLMV4"
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
 );
 
 export default function App() {
@@ -40,13 +40,12 @@ export default function App() {
           }
 
           // Upsert my location to Supabase
-          const { data, error } = await supabase.from("locations").upsert({
+          await supabase.from("locations").upsert({
             id: myId,
             lat: latitude,
             lng: longitude,
             updated_at: new Date().toISOString(),
           });
-          console.log("🛰️ Upsert result:", { data, error });
         },
         (err) => console.error("Geo error:", err),
         { enableHighAccuracy: true }
